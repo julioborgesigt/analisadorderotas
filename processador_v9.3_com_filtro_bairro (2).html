@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relatório de Frota Inteligente V9.3 (Com Filtro de Bairro)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <style>
+        body { background-color: #f8fafc; padding: 25px; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .card { border: none; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06); border-radius: 16px; margin-bottom: 25px; }
+        .header-section { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; padding: 40px; text-align: center; border-radius: 16px 16px 0 0; }
+        
+        #drop-area { border: 2px dashed #94a3b8; border-radius: 12px; padding: 40px; background: white; cursor: pointer; transition: 0.2s; }
+        #drop-area:hover { border-color: #3b82f6; background-color: #f1f5f9; }
+        #drop-area.processing { border-color: #f59e0b; background-color: #fffbeb; cursor: wait; }
+
+        .badge-stop { background-color: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; padding: 5px 10px; border-radius: 6px; font-weight: 600; }
+        .badge-move { background-color: #eff6ff; color: #1d4ed8; border: 1px solid #93c5fd; padding: 5px 10px; border-radius: 6px; font-weight: 600; }
+        .badge-bairro { background-color: #f0fdf4; color: #166534; border: 1px solid #86efac; padding: 3px 8px; border-radius: 4px; font-size: 0.75em; font-weight: 500; }
+
+        .btn-route { background-color: #2563eb; color: white; text-decoration: none; padding: 6px 12px; border-radius: 6px; font-size: 0.9em; transition: 0.2s; border: none; }
+        .btn-route:hover { background-color: #1e40af; color: white; transform: translateY(-1px); }
+
+        .btn-date { min-width: 60px; margin: 3px; border-radius: 20px; font-weight: 600; font-size: 0.9em; }
+
+        .info-box { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 15px; border-radius: 4px; font-size: 0.9em; color: #92400e; margin-bottom: 20px; }
+        .success-box { background: #f0fdf4; border-left: 4px solid #22c55e; padding: 15px; border-radius: 4px; font-size: 0.9em; color: #166534; margin-bottom: 20px; }
+        .error-box { background: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; border-radius: 4px; font-size: 0.9em; color: #991b1b; margin-bottom: 20px; }
+
+        details summary { list-style: none; cursor: pointer; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+        details summary::-webkit-details-marker { display: none; }
+        details summary::after { content: '+'; font-size: 1.5em; font-weight: normal; }
+        details[open] summary::after { content: '-'; }
+        .rules-list li { margin-bottom: 6px; }
+
+        .stats-badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 12px; font-size: 0.85em; margin: 2px; }
+
+        /* Estilos do filtro de bairro */
+        .filter-section { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 15px; margin-bottom: 20px; }
+        .filter-title { font-weight: 600; color: #475569; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .bairro-chip { display: inline-flex; align-items: center; background: white; border: 1px solid #cbd5e1; padding: 4px 10px; border-radius: 20px; margin: 3px; font-size: 0.85em; cursor: pointer; transition: all 0.2s; }
+        .bairro-chip:hover { border-color: #3b82f6; background: #eff6ff; }
+        .bairro-chip.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+        .bairro-chip .count { background: rgba(0,0,0,0.1); padding: 1px 6px; border-radius: 10px; margin-left: 6px; font-size: 0.8em; }
+        .bairro-chip.active .count { background: rgba(255,255,255,0.3); }
+        .filter-actions { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
+
+        .highlight-row { background-color: #fefce8 !important; }
+    </style>
+</head>
+
+<body>
+
+    <div class="container" style="max-width: 1200px;">
+        <div class="card">
+            <div class="header-section">
+                <h2 class="fw-bold">Gerador de Itinerário V9.3</h2>
+                <p class="opacity-75 mb-0">Com Filtro por Bairro e Todas as Correções</p>
+            </div>
+            <div class="card-body p-4">
+
+                <div class="info-box">
+                    <details>
+                        <summary><span>⚡ Regras e Lógica (Clique para expandir)</span></summary>
+                        <div class="mt-3 pt-2 border-top border-warning border-opacity-25">
+                            <ul class="rules-list ps-3 mb-0">
+                                <li><strong>1. Filtro de Ruído:</strong> Eventos de sistema ("Plug-In", "Sim Info", "Estou vivo!") ignorados.</li>
+                                <li><strong>2. Movimento:</strong> Velocidade > 1.0 km/h conta como deslocamento.</li>
+                                <li><strong>3. Correção GPS:</strong> Movimentos < 1 min convertidos em Parada.</li>
+                                <li><strong>4. Correção Odômetro:</strong> Deslocamentos com 0 km e duração ≥ 2 min são convertidos em Parada.</li>
+                                <li><strong>5. Fusão:</strong> Paradas < 2 min OU (com frenagem E < 5 min) são fundidas ao deslocamento.</li>
+                                <li><strong>6. Validação GPS:</strong> Coordenadas fora do Brasil são ignoradas.</li>
+                                <li><strong>7. Meia-noite:</strong> Trajetos que cruzam a meia-noite são calculados corretamente.</li>
+                                <li><strong>8. Filtro de Bairro:</strong> Filtre os resultados por bairros específicos.</li>
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <div id="drop-area">
+                    <div id="drop-content">
+                        <h4 class="text-secondary">📂 Carregar Planilha (XLSX/CSV)</h4>
+                        <p class="text-muted small">Arraste o arquivo aqui ou clique para selecionar</p>
+                    </div>
+                    <input type="file" id="fileInput" accept=".csv, .xlsx, .xls" style="display: none;">
+                </div>
+
+                <div id="stats-area" class="mt-3" style="display: none;"></div>
+
+                <div id="export-controls" class="mt-4" style="display: none;">
+                    <div class="card bg-light border-0 mb-3">
+                        <div class="card-body">
+                            <h6 class="fw-bold text-secondary mb-3">📅 Selecione os dias para exportar:</h6>
+                            <div id="export-dates-container" class="d-flex flex-wrap gap-3 justify-content-center mb-3"></div>
+                            <div class="d-flex justify-content-center gap-2">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllDates(true)">Marcar Todos</button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllDates(false)">Desmarcar Todos</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-center">
+                        <button class="btn btn-dark btn-lg shadow" onclick="exportHTMLReport()">📦 Baixar Relatório Portátil (HTML)</button>
+                    </div>
+                </div>
+
+                <div id="date-navigation" class="d-flex flex-wrap gap-2 justify-content-center mt-4 p-3 bg-light rounded"></div>
+            </div>
+        </div>
+
+        <!-- Filtro de Bairros -->
+        <div id="filter-section" class="filter-section" style="display: none;">
+            <div class="filter-title">
+                <span>🏘️ Filtrar por Bairro</span>
+                <small class="text-muted fw-normal">(clique para selecionar/deselecionar)</small>
+            </div>
+            <div id="bairros-container" class="d-flex flex-wrap"></div>
+            <div class="filter-actions d-flex gap-2 flex-wrap align-items-center">
+                <button class="btn btn-sm btn-outline-primary" onclick="selectAllBairros()">Todos</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="clearAllBairros()">Nenhum</button>
+                <button class="btn btn-sm btn-outline-success" onclick="invertBairros()">Inverter</button>
+                <span class="ms-auto text-muted small" id="filter-status"></span>
+            </div>
+        </div>
+
+        <div id="resultArea" style="display: none;">
+            <div class="card">
+                <div class="card-header bg-white py-3 px-4 d-flex justify-content-between align-items-center">
+                    <h5 id="displayDate" class="mb-0 fw-bold text-dark">Pré-visualização</h5>
+                    <span id="results-count" class="text-muted small"></span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light text-uppercase text-secondary small">
+                            <tr>
+                                <th style="width: 50px;"></th>
+                                <th class="ps-4">Status</th>
+                                <th>Início</th>
+                                <th>Fim</th>
+                                <th>Duração</th>
+                                <th>Distância</th>
+                                <th>Local / Trajeto</th>
+                                <th>Bairro</th>
+                                <th class="text-center">Mapa</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const dropArea = document.getElementById('drop-area');
+        const dropContent = document.getElementById('drop-content');
+        let allDataByDate = {};
+        let currentItinerary = [];
+        let currentDate = '';
+        let allBairros = new Set();
+        let selectedBairros = new Set();
+        let processingStats = { total: 0, valid: 0, ignored: 0, invalidGPS: 0 };
+
+        // Configurações
+        const IGNORED = ["Dispositivo Plug-In", "Sim Information", "Estou vivo!"];
+        const MERGE_THRESHOLD_MIN = 2.0; 
+        const BRAKING_MERGE_THRESHOLD_MIN = 5.0;
+        const MAX_WAYPOINTS = 10; 
+        const SPEED_BUMP_TRIGGERS = ["Frenagem brusca", "Freada excessiva", "Comportamento do motorista"];
+
+        // Função para extrair bairro da string de localização
+        function extractBairro(location) {
+            if (!location) return 'Desconhecido';
+            const parts = location.split(',').map(p => p.trim());
+            // O bairro geralmente é o segundo elemento (após o endereço)
+            // Formato: "498 Rua X, Bairro, Cidade, ..."
+            if (parts.length >= 2) {
+                let bairro = parts[1];
+                // Remover números iniciais se houver
+                bairro = bairro.replace(/^\d+\s*/, '').trim();
+                // Se o bairro parecer ser uma cidade ou região, tentar o terceiro elemento
+                if (bairro.includes('Região') || bairro.includes('Microrregião') || bairro.length < 3) {
+                    if (parts.length >= 3) {
+                        bairro = parts[2].replace(/^\d+\s*/, '').trim();
+                    }
+                }
+                return bairro || 'Desconhecido';
+            }
+            return 'Desconhecido';
+        }
+
+        // Função para extrair bairros de um segmento (início e fim)
+        function getSegmentBairros(item) {
+            const bairros = new Set();
+            if (item.locStart) bairros.add(extractBairro(item.locStart));
+            if (item.locEnd) bairros.add(extractBairro(item.locEnd));
+            return Array.from(bairros);
+        }
+
+        // Sanitização HTML
+        function sanitizeHTML(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // Validação de coordenadas do Brasil
+        function isValidBrazilCoord(lat, lon) {
+            return lat >= -33.75 && lat <= 5.27 && lon >= -73.99 && lon <= -34.79;
+        }
+
+        // Cálculo de duração com tratamento de meia-noite
+        function calcDuration(dateStr, startTime, endTime) {
+            let d1 = new Date(`${dateStr} ${startTime}`);
+            let d2 = new Date(`${dateStr} ${endTime}`);
+            if (d2 < d1) d2.setDate(d2.getDate() + 1);
+            return (d2 - d1) / 60000;
+        }
+
+        // --- UPLOAD ---
+        dropArea.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+        dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.style.backgroundColor = '#eff6ff'; });
+        dropArea.addEventListener('dragleave', (e) => { e.preventDefault(); dropArea.style.backgroundColor = '#fff'; });
+        dropArea.addEventListener('drop', (e) => { e.preventDefault(); dropArea.style.backgroundColor = '#fff'; if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+
+        function handleFile(file) {
+            dropArea.classList.add('processing');
+            dropContent.innerHTML = `
+                <div class="d-flex align-items-center justify-content-center gap-3">
+                    <div class="spinner-border text-warning" role="status"></div>
+                    <div>
+                        <h5 class="text-warning mb-1">Processando...</h5>
+                        <p class="text-muted small mb-0">${sanitizeHTML(file.name)}</p>
+                    </div>
+                </div>
+            `;
+
+            const reader = new FileReader();
+            const ext = file.name.split('.').pop().toLowerCase();
+            
+            reader.onload = (e) => {
+                try {
+                    const data = e.target.result;
+                    let rows = [];
+                    if (ext === 'csv') {
+                        const text = new TextDecoder().decode(data);
+                        rows = text.split('\n').map(l => l.split(',').map(c => c.replace(/"/g, '').trim()));
+                    } else {
+                        const wb = XLSX.read(data, { type: 'array' });
+                        rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+                    }
+                    processRawData(rows, file.name);
+                } catch (error) {
+                    showError(`Erro ao processar arquivo: ${error.message}`);
+                }
+            };
+            
+            reader.onerror = () => showError('Erro ao ler o arquivo.');
+            reader.readAsArrayBuffer(file);
+        }
+
+        function showError(message) {
+            dropArea.classList.remove('processing');
+            dropContent.innerHTML = `
+                <div class="error-box mb-0"><strong>❌ Erro:</strong> ${sanitizeHTML(message)}</div>
+                <p class="text-muted small mt-2 mb-0">Clique para tentar novamente</p>
+            `;
+        }
+
+        function processRawData(rows, fileName) {
+            allDataByDate = {};
+            allBairros = new Set();
+            processingStats = { total: 0, valid: 0, ignored: 0, invalidGPS: 0 };
+            let currentDateLocal = '';
+
+            rows.forEach(cols => {
+                if (!cols || cols.length < 1) return;
+                let val0 = String(cols[0]).trim();
+                let event = cols[2] ? String(cols[2]) : "";
+
+                processingStats.total++;
+
+                if (IGNORED.some(ign => event.includes(ign))) {
+                    processingStats.ignored++;
+                    return;
+                }
+
+                if (/^\d{4}-\d{2}-\d{2}$/.test(val0)) {
+                    currentDateLocal = val0;
+                    if (!allDataByDate[currentDateLocal]) allDataByDate[currentDateLocal] = [];
+                } else if (/^\d{2}:\d{2}:\d{2}$/.test(val0) && currentDateLocal) {
+                    let speed = parseFloat(cols[11]) || 0;
+                    let lat = parseFloat(cols[16]);
+                    let lon = parseFloat(cols[17]);
+                    let location = cols[5] || '';
+
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        if (isValidBrazilCoord(lat, lon)) {
+                            allDataByDate[currentDateLocal].push({
+                                t: val0, l: location, e: event, s: speed, 
+                                o: parseFloat(cols[14]) || 0, y: lat, x: lon
+                            });
+                            // Extrair bairro para o filtro
+                            const bairro = extractBairro(location);
+                            if (bairro !== 'Desconhecido') allBairros.add(bairro);
+                            processingStats.valid++;
+                        } else {
+                            processingStats.invalidGPS++;
+                        }
+                    }
+                }
+            });
+
+            dropArea.classList.remove('processing');
+            const numDates = Object.keys(allDataByDate).length;
+            
+            if (numDates === 0) {
+                showError('Nenhum dado válido encontrado na planilha.');
+                return;
+            }
+
+            dropContent.innerHTML = `
+                <div class="success-box mb-0">
+                    <strong>✅ Processado com sucesso!</strong><br>
+                    <small>${sanitizeHTML(fileName)}</small>
+                </div>
+            `;
+
+            document.getElementById('stats-area').style.display = 'block';
+            document.getElementById('stats-area').innerHTML = `
+                <div class="d-flex flex-wrap justify-content-center gap-2">
+                    <span class="stats-badge">📅 ${numDates} dia(s)</span>
+                    <span class="stats-badge">📍 ${processingStats.valid.toLocaleString()} registros</span>
+                    <span class="stats-badge">🏘️ ${allBairros.size} bairros</span>
+                    ${processingStats.invalidGPS > 0 ? `<span class="stats-badge" style="background:#fef2f2;color:#991b1b;">⚠️ ${processingStats.invalidGPS} GPS inválidos</span>` : ''}
+                </div>
+            `;
+
+            // Inicializar filtro de bairros
+            selectedBairros = new Set(allBairros);
+            renderBairrosFilter();
+
+            document.getElementById('export-controls').style.display = 'block';
+            document.getElementById('filter-section').style.display = 'block';
+            renderDateButtons();
+            renderExportCheckboxes();
+        }
+
+        // --- FILTRO DE BAIRROS ---
+        function renderBairrosFilter() {
+            const container = document.getElementById('bairros-container');
+            container.innerHTML = '';
+            
+            // Contar ocorrências de cada bairro
+            const bairroCounts = {};
+            Object.values(allDataByDate).flat().forEach(record => {
+                const bairro = extractBairro(record.l);
+                bairroCounts[bairro] = (bairroCounts[bairro] || 0) + 1;
+            });
+
+            // Ordenar bairros por contagem (mais frequentes primeiro)
+            const sortedBairros = Array.from(allBairros).sort((a, b) => 
+                (bairroCounts[b] || 0) - (bairroCounts[a] || 0)
+            );
+
+            sortedBairros.forEach(bairro => {
+                const chip = document.createElement('span');
+                chip.className = `bairro-chip ${selectedBairros.has(bairro) ? 'active' : ''}`;
+                chip.innerHTML = `${sanitizeHTML(bairro)}<span class="count">${bairroCounts[bairro] || 0}</span>`;
+                chip.onclick = () => toggleBairro(bairro, chip);
+                container.appendChild(chip);
+            });
+
+            updateFilterStatus();
+        }
+
+        function toggleBairro(bairro, chip) {
+            if (selectedBairros.has(bairro)) {
+                selectedBairros.delete(bairro);
+                chip.classList.remove('active');
+            } else {
+                selectedBairros.add(bairro);
+                chip.classList.add('active');
+            }
+            updateFilterStatus();
+            applyFilter();
+        }
+
+        function selectAllBairros() {
+            selectedBairros = new Set(allBairros);
+            document.querySelectorAll('.bairro-chip').forEach(c => c.classList.add('active'));
+            updateFilterStatus();
+            applyFilter();
+        }
+
+        function clearAllBairros() {
+            selectedBairros.clear();
+            document.querySelectorAll('.bairro-chip').forEach(c => c.classList.remove('active'));
+            updateFilterStatus();
+            applyFilter();
+        }
+
+        function invertBairros() {
+            const newSelected = new Set();
+            allBairros.forEach(b => {
+                if (!selectedBairros.has(b)) newSelected.add(b);
+            });
+            selectedBairros = newSelected;
+            document.querySelectorAll('.bairro-chip').forEach(chip => {
+                const bairro = chip.textContent.replace(/\d+$/, '').trim();
+                chip.classList.toggle('active', selectedBairros.has(bairro));
+            });
+            updateFilterStatus();
+            applyFilter();
+        }
+
+        function updateFilterStatus() {
+            const status = document.getElementById('filter-status');
+            status.textContent = `${selectedBairros.size} de ${allBairros.size} bairros selecionados`;
+        }
+
+        function applyFilter() {
+            if (currentItinerary.length > 0 && currentDate) {
+                renderTable(currentItinerary, currentDate);
+            }
+        }
+
+        // Verifica se um segmento passa pelo filtro de bairros
+        function passesFilter(item) {
+            if (selectedBairros.size === 0) return false;
+            if (selectedBairros.size === allBairros.size) return true;
+            
+            const segmentBairros = getSegmentBairros(item);
+            return segmentBairros.some(b => selectedBairros.has(b));
+        }
+
+        function renderExportCheckboxes() {
+            const container = document.getElementById('export-dates-container');
+            container.innerHTML = '';
+            Object.keys(allDataByDate).sort().forEach(date => {
+                const [y, m, d] = date.split('-');
+                const count = allDataByDate[date].length;
+                container.innerHTML += `
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input export-check" type="checkbox" id="check-${date}" value="${date}" checked>
+                        <label class="form-check-label" for="check-${date}">${d}/${m} <small class="text-muted">(${count})</small></label>
+                    </div>`;
+            });
+        }
+        
+        function toggleAllDates(chk) { 
+            document.querySelectorAll('.export-check').forEach(c => c.checked = chk); 
+        }
+
+        function renderDateButtons() {
+            const nav = document.getElementById('date-navigation');
+            nav.innerHTML = '';
+            const dates = Object.keys(allDataByDate).sort();
+            if (dates.length === 0) return;
+            
+            dates.forEach(date => {
+                const btn = document.createElement('button');
+                const [y, m, d] = date.split('-');
+                btn.className = 'btn btn-outline-primary btn-date';
+                btn.innerText = `${d}/${m}`;
+                btn.onclick = () => {
+                    document.querySelectorAll('#date-navigation button').forEach(b => {
+                        b.classList.remove('btn-primary', 'text-white');
+                        b.classList.add('btn-outline-primary');
+                    });
+                    btn.classList.remove('btn-outline-primary');
+                    btn.classList.add('btn-primary', 'text-white');
+                    currentDate = date;
+                    currentItinerary = calculateItinerary(allDataByDate[date], date);
+                    renderTable(currentItinerary, date);
+                };
+                nav.appendChild(btn);
+            });
+            nav.firstChild.click();
+        }
+
+        // --- LÓGICA CORE ---
+        function calculateItinerary(raw, dateStr) {
+            if (!raw || raw.length === 0) return [];
+            let segments = [];
+            let buffer = [raw[0]];
+
+            for (let i = 1; i < raw.length; i++) {
+                const prev = raw[i - 1];
+                const curr = raw[i];
+                const prevMove = prev.s > 1.0;
+                const currMove = curr.s > 1.0;
+
+                if (prevMove === currMove) {
+                    buffer.push(curr);
+                } else {
+                    segments.push(createSeg(buffer, dateStr));
+                    buffer = [curr];
+                }
+            }
+            segments.push(createSeg(buffer, dateStr));
+
+            // Correções
+            segments.forEach(s => { 
+                if (s.type === 'Deslocamento' && s.dur < 1.0) { 
+                    s.type = 'Parada'; 
+                    s.km = 0; 
+                } 
+            });
+
+            segments.forEach(s => { 
+                if (s.type === 'Deslocamento' && s.km === 0 && s.dur >= 2) { 
+                    s.type = 'Parada'; 
+                } 
+            });
+
+            for (let i = 0; i < segments.length; i++) {
+                let s = segments[i];
+                if (s.type === 'Parada') {
+                    const hasBraking = s.events.some(evt => 
+                        SPEED_BUMP_TRIGGERS.some(trig => evt.includes(trig))
+                    );
+                    if (s.dur < MERGE_THRESHOLD_MIN || (hasBraking && s.dur < BRAKING_MERGE_THRESHOLD_MIN)) {
+                        s.type = 'Deslocamento';
+                    }
+                }
+            }
+
+            let merged = [];
+            if (segments.length > 0) {
+                let cur = segments[0];
+                for (let i = 1; i < segments.length; i++) {
+                    let nxt = segments[i];
+                    if (cur.type === nxt.type) {
+                        cur.end = nxt.end; 
+                        cur.endTime = nxt.endTime; 
+                        cur.dur += nxt.dur; 
+                        cur.km += nxt.km;
+                        cur.locEnd = nxt.locEnd; 
+                        cur.coords = cur.coords.concat(nxt.coords); 
+                        cur.events = cur.events.concat(nxt.events);
+                    } else { 
+                        merged.push(cur); 
+                        cur = nxt; 
+                    }
+                }
+                merged.push(cur);
+            }
+            
+            return merged.filter(s => s.type === 'Deslocamento' || s.dur > 2.0);
+        }
+
+        function createSeg(list, dateStr) {
+            const s = list[0], e = list[list.length - 1];
+            const dur = calcDuration(dateStr, s.t, e.t);
+            const d1 = new Date(`${dateStr} ${s.t}`);
+            let d2 = new Date(`${dateStr} ${e.t}`);
+            if (d2 < d1) d2.setDate(d2.getDate() + 1);
+            
+            return {
+                type: s.s > 1.0 ? 'Deslocamento' : 'Parada',
+                start: s.t, end: e.t, startTime: d1, endTime: d2,
+                dur: dur, km: Math.max(0, e.o - s.o),
+                locStart: s.l, locEnd: e.l, 
+                coords: list.map(r => ({ y: r.y, x: r.x, t: r.t, s: r.s, l: r.l })),
+                events: list.map(r => r.e).filter(x => x)
+            };
+        }
+
+        // --- RENDER COM FILTRO ---
+        function renderTable(data, dateDisplay) {
+            document.getElementById('displayDate').innerText = `Data: ${dateDisplay.split('-').reverse().join('/')}`;
+            document.getElementById('resultArea').style.display = 'block';
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+
+            let visibleCount = 0;
+            let totalCount = data.length;
+
+            data.forEach((item, index) => {
+                const isVisible = passesFilter(item);
+                if (!isVisible && selectedBairros.size < allBairros.size) {
+                    return; // Pula itens que não passam no filtro
+                }
+                visibleCount++;
+
+                const isStop = item.type === 'Parada';
+                const badge = isStop ? 'badge-stop' : 'badge-move';
+                const mapLink = getMapLink(item);
+                const clean = (t) => t ? sanitizeHTML(t.split(',').slice(0, 2).join(',')) : '---';
+                
+                // Extrair bairros do segmento
+                const segmentBairros = getSegmentBairros(item);
+                const bairroHtml = segmentBairros.map(b => 
+                    `<span class="badge-bairro">${sanitizeHTML(b)}</span>`
+                ).join(' ');
+
+                let locHtml = isStop
+                    ? `<span class="text-muted">${clean(item.locStart)}</span>`
+                    : `<div style="font-size:0.9em"><strong class="text-success">➜ ${clean(item.locStart)}</strong><br><strong class="text-danger">🛑 ${clean(item.locEnd)}</strong></div>`;
+
+                let detailsButton = '';
+                let detailsRow = '';
+
+                if (!isStop && item.coords && item.coords.length > 0) {
+                    const collapseId = `trip-details-${index}`;
+                    
+                    detailsButton = `
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="false" style="border-radius: 50%; width: 25px; height: 25px; padding: 0; line-height: 1; font-weight:bold;">
+                            +
+                        </button>
+                    `;
+
+                    const detailRows = item.coords.map(point => `
+                        <tr>
+                            <td class="text-center small">${sanitizeHTML(point.t)}</td>
+                            <td class="text-center small">${point.s} km/h</td>
+                            <td class="small text-truncate" style="max-width: 300px;" title="${sanitizeHTML(point.l)}">${sanitizeHTML(point.l)}</td>
+                            <td class="small"><span class="badge-bairro">${sanitizeHTML(extractBairro(point.l))}</span></td>
+                        </tr>
+                    `).join('');
+
+                    detailsRow = `
+                        <tr class="collapse" id="${collapseId}">
+                            <td colspan="9" class="p-3 bg-light">
+                                <div class="card shadow-sm border-0 m-0">
+                                    <div class="card-header bg-white fw-bold text-primary small">
+                                        📍 Detalhamento do Trecho (${item.coords.length} pontos)
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                                            <table class="table table-sm table-striped mb-0">
+                                                <thead class="sticky-top bg-white">
+                                                    <tr>
+                                                        <th class="text-center">Horário</th>
+                                                        <th class="text-center">Velocidade</th>
+                                                        <th>Localização</th>
+                                                        <th>Bairro</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>${detailRows}</tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }
+
+                tbody.innerHTML += `
+                <tr>
+                    <td class="text-center align-middle">${detailsButton}</td>
+                    <td class="ps-4 align-middle"><span class="${badge}">${item.type}</span></td>
+                    <td class="align-middle">${item.start}</td>
+                    <td class="align-middle">${item.end}</td>
+                    <td class="align-middle">${item.dur.toFixed(0)} min</td>
+                    <td class="align-middle">${item.km.toFixed(1)} km</td>
+                    <td class="align-middle">${locHtml}</td>
+                    <td class="align-middle">${bairroHtml}</td>
+                    <td class="text-center align-middle"><a href="${mapLink}" target="_blank" class="btn-route">${isStop ? '📍 Ver' : '🚗 Trajeto'}</a></td>
+                </tr>
+                ${detailsRow}`;
+            });
+
+            // Atualizar contador de resultados
+            const resultsCount = document.getElementById('results-count');
+            if (selectedBairros.size < allBairros.size) {
+                resultsCount.textContent = `Exibindo ${visibleCount} de ${totalCount} segmentos (filtro ativo)`;
+                resultsCount.classList.add('text-primary');
+            } else {
+                resultsCount.textContent = `${totalCount} segmentos`;
+                resultsCount.classList.remove('text-primary');
+            }
+        }
+
+        function getMapLink(item) {
+            const c = item.coords;
+            const origin = c[0];
+            if (item.type === 'Parada') {
+                return `https://www.google.com/maps/search/?api=1&query=${origin.y},${origin.x}`;
+            }
+
+            const dest = c[c.length - 1];
+            let wps = [];
+            const mids = c.slice(1, -1);
+            if (mids.length > 0) {
+                if (mids.length <= MAX_WAYPOINTS) {
+                    wps = mids;
+                } else {
+                    const step = mids.length / (MAX_WAYPOINTS + 1);
+                    for (let i = 1; i <= MAX_WAYPOINTS; i++) {
+                        wps.push(mids[Math.floor(i * step)]);
+                    }
+                }
+            }
+            const wpStr = wps.map(p => `${p.y},${p.x}`).join('|');
+            let url = `https://www.google.com/maps/dir/?api=1&origin=${origin.y},${origin.x}&destination=${dest.y},${dest.x}&travelmode=driving`;
+            if (wpStr) url += `&waypoints=${wpStr}`;
+            return url;
+        }
+
+        // --- EXPORTADOR (SEM FILTRO DE BAIRRO - JÁ APLICADO) ---
+        function exportHTMLReport() {
+            const selectedDates = Array.from(document.querySelectorAll('.export-check:checked')).map(cb => cb.value);
+            if (selectedDates.length === 0) { 
+                alert("Selecione pelo menos um dia para exportar."); 
+                return; 
+            }
+            
+            // Aplicar filtro de bairros ANTES de exportar
+            const filteredData = {};
+            let totalPoints = 0;
+            let totalSegments = 0;
+            const filterActive = selectedBairros.size < allBairros.size;
+            const bairrosUsados = new Set();
+            
+            selectedDates.forEach(d => { 
+                if (allDataByDate[d]) {
+                    let dayData = allDataByDate[d];
+                    
+                    // Se filtro está ativo, filtrar os registros pelos bairros selecionados
+                    if (filterActive) {
+                        dayData = dayData.filter(record => {
+                            const bairro = extractBairro(record.l);
+                            return selectedBairros.has(bairro);
+                        });
+                    }
+                    
+                    // Coletar bairros usados
+                    dayData.forEach(record => {
+                        const bairro = extractBairro(record.l);
+                        if (bairro !== 'Desconhecido') bairrosUsados.add(bairro);
+                    });
+                    
+                    if (dayData.length > 5000) {
+                        const step = Math.ceil(dayData.length / 5000);
+                        dayData = dayData.filter((_, i) => i % step === 0);
+                    }
+                    
+                    if (dayData.length > 0) {
+                        filteredData[d] = dayData;
+                        totalPoints += dayData.length;
+                    }
+                }
+            });
+            
+            if (Object.keys(filteredData).length === 0) {
+                alert("Nenhum dado encontrado com os filtros selecionados.");
+                return;
+            }
+            
+            const dataJson = JSON.stringify(filteredData);
+            const bairrosInfo = filterActive 
+                ? `Filtrado por: ${Array.from(selectedBairros).slice(0, 5).join(', ')}${selectedBairros.size > 5 ? ` e mais ${selectedBairros.size - 5}` : ''}`
+                : `${bairrosUsados.size} bairros`;
+
+            const jsLogic = `
+                const DB=${dataJson};
+                const MERGE_THRESHOLD=2.0;
+                const BRAKING_THRESHOLD=5.0;
+                
+                window.onload=function(){
+                    const d=Object.keys(DB).sort();
+                    const n=document.getElementById('nc');
+                    d.forEach(dt=>{
+                        const b=document.createElement('button');
+                        b.className='btn btn-outline-secondary btn-date';
+                        b.innerText=dt.split('-').reverse().join('/');
+                        b.onclick=()=>ld(dt);
+                        n.appendChild(b)
+                    });
+                    if(d.length>0)ld(d[0])
+                };
+                
+                function extractBairro(loc){
+                    if(!loc)return'Desconhecido';
+                    const parts=loc.split(',').map(p=>p.trim());
+                    if(parts.length>=2){
+                        let b=parts[1].replace(/^\\d+\\s*/,'').trim();
+                        if(b.includes('Região')||b.includes('Microrregião')||b.length<3){
+                            if(parts.length>=3)b=parts[2].replace(/^\\d+\\s*/,'').trim();
+                        }
+                        return b||'Desconhecido';
+                    }
+                    return'Desconhecido';
+                }
+                
+                function getSegmentBairros(item){
+                    const b=new Set();
+                    if(item.locStart)b.add(extractBairro(item.locStart));
+                    if(item.locEnd)b.add(extractBairro(item.locEnd));
+                    return Array.from(b);
+                }
+                
+                function ld(d){
+                    document.getElementById('rt').innerText='Data: '+d.split('-').reverse().join('/');
+                    const data=calc(DB[d],d);
+                    const tb=document.getElementById('rb');
+                    tb.innerHTML='';
+                    document.getElementById('seg-count').textContent=data.length+' segmentos';
+                    
+                    data.forEach((i,idx)=>{
+                        const isS=i.type==='Parada';
+                        const b=isS?'badge-stop':'badge-move';
+                        const mp=gL(i);
+                        const cl=(t)=>t?t.split(',').slice(0,2).join(','):'-';
+                        const lc=isS?cl(i.locStart):'<span class="text-success">➜ '+cl(i.locStart)+'</span><br><span class="text-danger">🛑 '+cl(i.locEnd)+'</span>';
+                        const bairros=getSegmentBairros(i).map(x=>'<span class="badge-bairro">'+esc(x)+'</span>').join(' ');
+                        
+                        let btn='',row='';
+                        if(!isS&&i.c&&i.c.length>0){
+                            const id='d'+idx;
+                            btn='<button class="btn btn-sm btn-outline-secondary" style="border-radius:50%;width:25px;height:25px;padding:0;" data-bs-toggle="collapse" data-bs-target="#'+id+'">+</button>';
+                            const rows=i.c.slice(0,100).map(p=>'<tr><td>'+p.t+'</td><td>'+p.s+' km/h</td><td class="small">'+esc(p.l)+'</td><td><span class="badge-bairro">'+esc(extractBairro(p.l))+'</span></td></tr>').join('');
+                            const more=i.c.length>100?'<tr><td colspan="4" class="text-center text-muted small">... e mais '+(i.c.length-100)+' pontos</td></tr>':'';
+                            row='<tr class="collapse" id="'+id+'"><td colspan="9" class="p-3 bg-light"><div class="card"><div class="card-body p-0"><div style="max-height:300px;overflow:auto"><table class="table table-sm table-striped mb-0"><thead><tr><th>Hora</th><th>Vel</th><th>Local</th><th>Bairro</th></tr></thead><tbody>'+rows+more+'</tbody></table></div></div></div></td></tr>';
+                        }
+                        tb.innerHTML+='<tr><td class="text-center">'+btn+'</td><td><span class="'+b+'">'+i.type+'</span></td><td>'+i.start+'</td><td>'+i.end+'</td><td>'+i.dur.toFixed(0)+'</td><td>'+i.km.toFixed(1)+'</td><td style="font-size:0.9em">'+lc+'</td><td>'+bairros+'</td><td><a href="'+mp+'" target="_blank" class="btn-route">'+(isS?'📍 Ver':'🚗 Rota')+'</a></td></tr>'+row;
+                    });
+                }
+                
+                function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+                
+                function calc(r,d){
+                    if(!r||r.length===0)return[];
+                    let s=[],b=[r[0]];
+                    for(let i=1;i<r.length;i++){
+                        if((r[i-1].s>1)===(r[i].s>1))b.push(r[i]);
+                        else{s.push(mk(b,d));b=[r[i]];}
+                    }
+                    s.push(mk(b,d));
+                    s.forEach(x=>{if(x.type==='Deslocamento'&&x.dur<1){x.type='Parada';x.km=0;}});
+                    s.forEach(x=>{if(x.type==='Deslocamento'&&x.km===0&&x.dur>=2){x.type='Parada';}});
+                    for(let i=0;i<s.length;i++){
+                        if(s[i].type==='Parada'){
+                            const hasBraking=s[i].evts&&s[i].evts.some(e=>e.includes("Frenagem")||e.includes("Freada")||e.includes("Comportamento"));
+                            if(s[i].dur<MERGE_THRESHOLD||(hasBraking&&s[i].dur<BRAKING_THRESHOLD))s[i].type='Deslocamento';
+                        }
+                    }
+                    let m=[];
+                    if(s.length>0){
+                        let c=s[0];
+                        for(let i=1;i<s.length;i++){
+                            let n=s[i];
+                            if(c.type===n.type){c.end=n.end;c.dur+=n.dur;c.km+=n.km;c.locEnd=n.locEnd;c.c=c.c.concat(n.c);c.evts=c.evts.concat(n.evts);}
+                            else{m.push(c);c=n;}
+                        }
+                        m.push(c);
+                    }
+                    return m.filter(x=>x.type==='Deslocamento'||x.dur>2);
+                }
+                
+                function mk(l,d){
+                    const s=l[0],e=l[l.length-1];
+                    let d1=new Date(d+' '+s.t),d2=new Date(d+' '+e.t);
+                    if(d2<d1)d2.setDate(d2.getDate()+1);
+                    return{type:s.s>1?'Deslocamento':'Parada',start:s.t,end:e.t,dur:(d2-d1)/60000,km:Math.max(0,e.o-s.o),locStart:s.l,locEnd:e.l,c:l.map(z=>({t:z.t,s:z.s,l:z.l,y:z.y,x:z.x})),evts:l.map(z=>z.e).filter(k=>k)}
+                }
+                
+                function gL(i){
+                    const o=i.c[0];
+                    if(i.type==='Parada')return'https://www.google.com/maps/search/?api=1&query='+o.y+','+o.x;
+                    const d=i.c[i.c.length-1];
+                    let w=[];const m=i.c.slice(1,-1);
+                    if(m.length>0){if(m.length<=10)w=m;else{const st=m.length/11;for(let k=1;k<=10;k++)w.push(m[Math.floor(k*st)]);}}
+                    const ws=w.map(p=>p.y+','+p.x).join('|');
+                    let u='https://www.google.com/maps/dir/?api=1&origin='+o.y+','+o.x+'&destination='+d.y+','+d.x+'&travelmode=driving';
+                    if(ws)u+='&waypoints='+ws;
+                    return u;
+                }
+            `;
+
+            const htmlContent = `<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Relatório Frota V9.3</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"><\/script>
+    <style>
+        body{background-color:#f1f5f9;padding:20px;font-family:sans-serif}
+        .card{border:none;box-shadow:0 4px 15px rgba(0,0,0,0.05);border-radius:12px;margin-bottom:20px}
+        .header{background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center}
+        .badge-stop{background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;padding:4px 8px;border-radius:4px;font-weight:600}
+        .badge-move{background:#eff6ff;color:#1d4ed8;border:1px solid #93c5fd;padding:4px 8px;border-radius:4px;font-weight:600}
+        .badge-bairro{background:#f0fdf4;color:#166534;border:1px solid #86efac;padding:2px 6px;border-radius:4px;font-size:0.75em}
+        .btn-route{background:#2563eb;color:white;text-decoration:none;padding:5px 10px;border-radius:4px;font-size:0.85em}
+        .btn-route:hover{background:#1e40af;color:white}
+        .btn-date{margin:2px;border-radius:15px;font-weight:600}
+        .info-footer{background:#f8fafc;padding:10px;text-align:center;font-size:0.8em;color:#64748b;border-radius:0 0 12px 12px}
+        .filter-info{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 15px;margin-bottom:15px;font-size:0.9em;color:#1e40af}
+    </style>
+</head>
+<body>
+    <div class="container" style="max-width:1100px">
+        <div class="card">
+            <div class="header">
+                <h3 class="mb-1">📊 Relatório de Itinerário</h3>
+                <p class="mb-0 opacity-75">Gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}</p>
+            </div>
+            <div class="card-body bg-light">
+                <div id="nc" class="d-flex flex-wrap justify-content-center gap-1 mb-3"></div>
+                ${filterActive ? `<div class="filter-info text-center">🏘️ <strong>Filtro aplicado:</strong> ${sanitizeHTML(Array.from(selectedBairros).join(', '))}</div>` : ''}
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h5 id="rt" class="mb-0">Selecione uma data</h5>
+                <small id="seg-count" class="text-muted"></small>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr><th style="width:40px"></th><th>Status</th><th>Início</th><th>Fim</th><th>Duração</th><th>Distância</th><th>Local</th><th>Bairro</th><th>Mapa</th></tr>
+                    </thead>
+                    <tbody id="rb"></tbody>
+                </table>
+            </div>
+            <div class="info-footer">
+                Gerador de Itinerário V9.3 | ${totalPoints.toLocaleString()} registros | ${bairrosInfo}
+            </div>
+        </div>
+    </div>
+    <script>${jsLogic}<\/script>
+</body>
+</html>`;
+
+            const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `Relatorio_Frota_V9.3_${new Date().toISOString().split('T')[0]}.html`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+    </script>
+
+</body>
+</html>
