@@ -1009,6 +1009,32 @@
             MERGE_THRESHOLD_MIN: 2.0,
             BRAKING_MERGE_THRESHOLD_MIN: 5.0,
             MAX_WAYPOINTS: 10,
+
+            // Mapeamento de colunas para diferentes formatos
+            COLUMN_MAP: {
+                // Formato padrão CSV/XLSX (índices originais)
+                csv: {
+                    event: 2,
+                    location: 5,
+                    speed: 11,
+                    odometer: 14,
+                    lat: 16,
+                    lon: 17
+                },
+                // Formato PDF (baseado na estrutura do relatório de eventos)
+                pdf: {
+                    event: 1,      // Descrição do evento
+                    location: 2,   // Nome do Local
+                    driver: 3,     // Descrição do motorista
+                    speed: 4,      // Velocidade (km)
+                    odometer: 5,   // Odômetro (km)
+                    lat: 6,        // Latitude
+                    lon: 7         // Longitude
+                }
+            },
+
+            // Formato atual do arquivo sendo processado
+            currentFormat: 'csv',
             SPEED_BUMP_TRIGGERS: ["Frenagem brusca", "Freada excessiva", "Comportamento do motorista"],
 
             // Novos thresholds melhorados
@@ -1090,17 +1116,22 @@
                 return (d2 - d1) / 60000;
             },
 
-            processRawData(rows, fileName) {
+            processRawData(rows, fileName, fileFormat = 'csv') {
                 AppState.clearData();
                 let currentDateLocal = '';
                 let firstDataRow = null;
 
-                console.log(`🔄 Processando ${rows.length} linhas do arquivo...`);
+                // Definir formato atual e obter mapeamento de colunas
+                this.currentFormat = fileFormat;
+                const colMap = this.COLUMN_MAP[fileFormat] || this.COLUMN_MAP.csv;
+
+                console.log(`🔄 Processando ${rows.length} linhas do arquivo (formato: ${fileFormat})...`);
+                console.log(`📋 Mapeamento de colunas:`, colMap);
 
                 rows.forEach((cols, index) => {
                     if (!cols || cols.length < 1) return;
                     let val0 = String(cols[0]).trim();
-                    let event = cols[2] ? String(cols[2]) : "";
+                    let event = cols[colMap.event] ? String(cols[colMap.event]) : "";
 
                     AppState.stats.total++;
 
@@ -1116,10 +1147,10 @@
                         }
                         console.log(`📅 Data encontrada: ${currentDateLocal}`);
                     } else if (/^\d{2}:\d{2}:\d{2}$/.test(val0) && currentDateLocal) {
-                        let speed = parseFloat(cols[11]) || 0;
-                        let lat = parseFloat(cols[16]);
-                        let lon = parseFloat(cols[17]);
-                        let location = cols[5] || '';
+                        let speed = parseFloat(cols[colMap.speed]) || 0;
+                        let lat = parseFloat(cols[colMap.lat]);
+                        let lon = parseFloat(cols[colMap.lon]);
+                        let location = cols[colMap.location] || '';
 
                         // Log primeira linha de dados válida
                         if (!firstDataRow && index < 20) {
@@ -1131,7 +1162,7 @@
                             if (SecurityUtils.isValidBrazilCoord(lat, lon)) {
                                 AppState.data[currentDateLocal].push({
                                     t: val0, l: location, e: event, s: speed,
-                                    o: parseFloat(cols[14]) || 0, y: lat, x: lon
+                                    o: parseFloat(cols[colMap.odometer]) || 0, y: lat, x: lon
                                 });
 
                                 // Pré-computar bairros (OTIMIZAÇÃO - Item 4)
@@ -1158,7 +1189,7 @@
                             }
                         } else {
                             if (index < 10) {
-                                console.warn(`⚠️ Coordenadas NaN na linha ${index}: cols[16]=${cols[16]}, cols[17]=${cols[17]}`);
+                                console.warn(`⚠️ Coordenadas NaN na linha ${index}: cols[${colMap.lat}]=${cols[colMap.lat]}, cols[${colMap.lon}]=${cols[colMap.lon]}`);
                             }
                         }
                     }
@@ -1969,70 +2000,83 @@
                     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
                     console.log(`📄 PDF carregado: ${pdf.numPages} páginas`);
 
-                    let allItems = [];
+                    let allLines = [];
 
                     // Extrair texto estruturado de todas as páginas preservando posição
                     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                         const page = await pdf.getPage(pageNum);
                         const textContent = await page.getTextContent();
 
-                        // Agrupar itens por linha (mesma posição Y)
+                        // Agrupar itens por linha (posições Y similares - tolerância de 3 pixels)
                         const lineMap = new Map();
+                        const yTolerance = 3;
 
                         textContent.items.forEach(item => {
-                            const y = Math.round(item.transform[5]); // Posição Y
-                            if (!lineMap.has(y)) {
-                                lineMap.set(y, []);
+                            if (!item.str || item.str.trim() === '') return;
+
+                            const y = Math.round(item.transform[5]);
+
+                            // Encontrar linha existente com Y similar
+                            let foundY = null;
+                            for (const existingY of lineMap.keys()) {
+                                if (Math.abs(existingY - y) <= yTolerance) {
+                                    foundY = existingY;
+                                    break;
+                                }
                             }
-                            lineMap.get(y).push({
-                                text: item.str,
-                                x: item.transform[4],
-                                y: y
+
+                            const targetY = foundY !== null ? foundY : y;
+                            if (!lineMap.has(targetY)) {
+                                lineMap.set(targetY, []);
+                            }
+
+                            lineMap.get(targetY).push({
+                                text: item.str.trim(),
+                                x: Math.round(item.transform[4]),
+                                width: item.width || 0
                             });
                         });
 
                         // Ordenar linhas por Y (de cima para baixo)
-                        const sortedLines = Array.from(lineMap.values())
-                            .sort((a, b) => b[0].y - a[0].y);
+                        const sortedLines = Array.from(lineMap.entries())
+                            .sort((a, b) => b[0] - a[0])
+                            .map(entry => entry[1]);
 
                         // Ordenar itens dentro de cada linha por X (esquerda para direita)
                         sortedLines.forEach(line => {
                             line.sort((a, b) => a.x - b.x);
                         });
 
-                        allItems.push(...sortedLines);
+                        allLines.push(...sortedLines);
                     }
 
-                    console.log(`📊 Total de linhas extraídas: ${allItems.length}`);
+                    console.log(`📊 Total de linhas extraídas: ${allLines.length}`);
 
-                    // Converter para formato de rows
+                    // Detectar posições das colunas baseado nos cabeçalhos ou estrutura
+                    // Usar uma abordagem baseada em posição X para agrupar em colunas
+                    const columnBoundaries = this.detectPDFColumnBoundaries(allLines);
+                    console.log('📐 Limites de colunas detectados:', columnBoundaries);
+
+                    // Converter para formato de rows usando os limites de colunas
                     const rows = [];
 
-                    allItems.forEach(line => {
+                    allLines.forEach((line, lineIndex) => {
+                        // Construir texto completo da linha para verificação
                         const rowText = line.map(item => item.text).join(' ');
 
-                        // Dividir em colunas tentando diferentes estratégias
-                        let columns = [];
-
-                        // Estratégia 1: Espaços múltiplos (2+)
-                        columns = rowText.split(/\s{2,}/).map(c => c.trim()).filter(c => c);
-
-                        // Estratégia 2: Se não funcionou, tentar por espaço simples
-                        if (columns.length < 10) {
-                            columns = rowText.split(/\s+/).map(c => c.trim()).filter(c => c);
-                        }
-
-                        // Apenas adicionar linhas que parecem ter dados GPS
+                        // Verificar se é linha de dados (tem hora e coordenadas, ou tem data)
                         const hasDate = /\d{4}-\d{2}-\d{2}/.test(rowText);
-                        const hasTime = /\d{2}:\d{2}:\d{2}/.test(rowText);
+                        const hasTime = /^\d{2}:\d{2}:\d{2}$/.test(line[0]?.text || '');
                         const hasCoords = /-?\d+\.\d{4,}/.test(rowText);
 
                         if (hasDate || (hasTime && hasCoords)) {
+                            // Mapear itens para colunas baseado em posição X
+                            const columns = this.mapItemsToColumns(line, columnBoundaries);
                             rows.push(columns);
 
-                            // Log primeira linha de dados para debug
-                            if (rows.length === 1 || (hasDate && rows.length < 5)) {
-                                console.log('📍 Linha extraída:', columns);
+                            // Log primeiras linhas de dados para debug
+                            if (rows.length <= 3) {
+                                console.log(`📍 Linha ${rows.length}:`, columns);
                             }
                         }
                     });
@@ -2043,16 +2087,113 @@
                         throw new Error('Nenhum dado GPS encontrado no PDF');
                     }
 
-                    // Tentar detectar estrutura de colunas
-                    console.log('🔍 Primeira linha:', rows[0]);
-                    console.log('🔍 Segunda linha:', rows[1]);
-
                     return rows;
 
                 } catch (error) {
                     console.error('❌ Erro ao processar PDF:', error);
                     throw new Error(`Não foi possível extrair dados do PDF: ${error.message}`);
                 }
+            },
+
+            // Detectar limites das colunas baseado na estrutura do PDF
+            detectPDFColumnBoundaries(allLines) {
+                // Coletar todas as posições X únicas
+                const xPositions = new Set();
+                allLines.forEach(line => {
+                    line.forEach(item => {
+                        xPositions.add(item.x);
+                    });
+                });
+
+                // Ordenar posições X
+                const sortedX = Array.from(xPositions).sort((a, b) => a - b);
+
+                // Agrupar posições próximas (tolerância de 10 pixels)
+                const groupTolerance = 15;
+                const columnStarts = [];
+                let lastX = -Infinity;
+
+                sortedX.forEach(x => {
+                    if (x - lastX > groupTolerance) {
+                        columnStarts.push(x);
+                    }
+                    lastX = x;
+                });
+
+                // Se detectamos poucos limites, usar limites padrão baseados no formato esperado
+                // Formato PDF típico: Hora | Evento | Local | Motorista | Velocidade | Odômetro | Lat | Lon
+                if (columnStarts.length < 5) {
+                    console.log('⚠️ Poucos limites detectados, usando heurística baseada na linha');
+                    return null; // Retornar null para usar fallback
+                }
+
+                return columnStarts;
+            },
+
+            // Mapear itens de texto para colunas baseado nas posições X
+            mapItemsToColumns(line, columnBoundaries) {
+                // Se não temos limites definidos, usar abordagem baseada em gaps
+                if (!columnBoundaries || columnBoundaries.length < 5) {
+                    return this.mapItemsToColumnsByGaps(line);
+                }
+
+                // Criar array de colunas
+                const numCols = columnBoundaries.length;
+                const columns = new Array(numCols).fill('');
+
+                line.forEach(item => {
+                    // Encontrar coluna mais próxima
+                    let colIndex = 0;
+                    let minDist = Infinity;
+
+                    for (let i = 0; i < columnBoundaries.length; i++) {
+                        const dist = Math.abs(item.x - columnBoundaries[i]);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            colIndex = i;
+                        }
+                    }
+
+                    // Adicionar texto à coluna (concatenar se já houver texto)
+                    if (columns[colIndex]) {
+                        columns[colIndex] += ' ' + item.text;
+                    } else {
+                        columns[colIndex] = item.text;
+                    }
+                });
+
+                return columns;
+            },
+
+            // Mapear itens para colunas baseado em gaps entre elementos
+            mapItemsToColumnsByGaps(line) {
+                if (!line || line.length === 0) return [];
+
+                const columns = [];
+                let currentCol = line[0].text;
+                let lastX = line[0].x + (line[0].width || 0);
+                const gapThreshold = 15; // Gap mínimo entre colunas
+
+                for (let i = 1; i < line.length; i++) {
+                    const item = line[i];
+                    const gap = item.x - lastX;
+
+                    if (gap > gapThreshold) {
+                        // Novo item está em uma nova coluna
+                        columns.push(currentCol.trim());
+                        currentCol = item.text;
+                    } else {
+                        // Mesmo item está na mesma coluna
+                        currentCol += ' ' + item.text;
+                    }
+
+                    lastX = item.x + (item.width || 0);
+                }
+
+                // Adicionar última coluna
+                columns.push(currentCol.trim());
+
+                return columns;
             },
 
             handleFile(file) {
@@ -2123,7 +2264,9 @@
                             }
 
                             ProgressManager.update(60, 'Processando registros...');
-                            const result = DataProcessor.processRawData(rows, file.name);
+                            // Determinar formato do arquivo para mapeamento de colunas
+                            const fileFormat = ext === 'pdf' ? 'pdf' : 'csv';
+                            const result = DataProcessor.processRawData(rows, file.name, fileFormat);
 
                             dropArea.classList.remove('processing');
 
